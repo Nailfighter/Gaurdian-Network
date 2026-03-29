@@ -2,64 +2,17 @@ import { useEffect, useState, useCallback } from "react";
 
 const SERVER_URL = "/api";
 
-const VERDICT_STYLES = {
-  ALLOW:  { label: "ALLOW",  className: "badge allow" },
-  BLOCK:  { label: "BLOCK",  className: "badge block" },
-  PAUSED: { label: "PAUSED", className: "badge paused" },
-};
-
-function Badge({ verdict }) {
-  const s = VERDICT_STYLES[verdict] ?? { label: verdict ?? "PENDING", className: "badge" };
-  return <span className={s.className}>{s.label}</span>;
-}
-
-function RequestCard({ request, onDecide }) {
-  const [deciding, setDeciding] = useState(false);
-
-  async function handleDecide(action) {
-    setDeciding(true);
-    await onDecide(request.id, action);
-    setDeciding(false);
-  }
-
-  return (
-    <div className="request-card">
-      <div className="request-header">
-        <Badge verdict={request.verdict} />
-        <span className="score">Score: {request.decision_score ?? "—"}/100</span>
-        <span className="device">{request.device_id ?? "unknown device"}</span>
-        <span className="timestamp">{request.timestamp ? new Date(request.timestamp).toLocaleTimeString() : "—"}</span>
-      </div>
-      <div className="url">
-        <a href={request.url} target="_blank" rel="noopener noreferrer">{request.url}</a>
-      </div>
-      {request.reason_text && <p className="reason">{request.reason_text}</p>}
-      {request.verdict === "PAUSED" && (
-        <div className="actions">
-          <button className="btn approve" disabled={deciding} onClick={() => handleDecide("approve")}>
-            Approve
-          </button>
-          <button className="btn deny" disabled={deciding} onClick={() => handleDecide("deny")}>
-            Deny
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function Dashboard() {
-  const [requests, setRequests] = useState([]);
-  const [offline, setOffline]   = useState(false);
-  const [loading, setLoading]   = useState(true);
+  const [entries, setEntries] = useState([]);
+  const [offline, setOffline] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const loadRequests = useCallback(async () => {
+  const loadLog = useCallback(async () => {
     try {
-      const res = await fetch(`${SERVER_URL}/requests`);
+      const res = await fetch(`${SERVER_URL}/dns-log?n=200`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const list = data.requests ?? data;
-      setRequests(Array.isArray(list) ? list : Object.values(list ?? {}));
+      setEntries(data.entries ?? []);
       setOffline(false);
     } catch {
       setOffline(true);
@@ -68,53 +21,66 @@ export default function Dashboard() {
     }
   }, []);
 
-  async function handleDecide(id, action) {
-    try {
-      const res = await fetch(`${SERVER_URL}/decision/${id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setRequests((prev) =>
-        prev.map((r) =>
-          r.id === id ? { ...r, verdict: action === "approve" ? "ALLOW" : "BLOCK" } : r
-        )
-      );
-    } catch {
-      alert("Failed to submit decision — please try again.");
-    }
-  }
-
   useEffect(() => {
-    loadRequests();
-    const interval = setInterval(loadRequests, 5000);
+    loadLog();
+    const interval = setInterval(loadLog, 3000);
     return () => clearInterval(interval);
-  }, [loadRequests]);
+  }, [loadLog]);
 
   return (
-    <div>
-      <header>
-        <h1>Guardian Parent Dashboard</h1>
-        <span className={`status-dot ${offline ? "offline" : "online"}`} title={offline ? "Server offline" : "Connected"} />
+    <div style={{ fontFamily: "monospace", padding: "1rem" }}>
+      <header style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
+        <h1 style={{ margin: 0, fontSize: "1.25rem" }}>Guardian — DNS Log</h1>
+        <span
+          title={offline ? "Server offline" : "Connected"}
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            background: offline ? "#e55" : "#4c4",
+            display: "inline-block",
+          }}
+        />
       </header>
 
-      <main>
-        {offline && (
-          <div className="banner error">Server offline — retrying&hellip;</div>
-        )}
+      {offline && (
+        <p style={{ color: "#e55" }}>Server offline — retrying&hellip;</p>
+      )}
 
-        <section>
-          <h2>Child Requests</h2>
-          {loading && <p className="empty-state">Loading&hellip;</p>}
-          {!loading && requests.length === 0 && (
-            <p className="empty-state">No requests yet.</p>
-          )}
-          {requests.map((r) => (
-            <RequestCard key={r.id} request={r} onDecide={handleDecide} />
-          ))}
-        </section>
-      </main>
+      {loading && <p>Loading&hellip;</p>}
+
+      {!loading && entries.length === 0 && (
+        <p style={{ color: "#888" }}>No DNS queries logged yet.</p>
+      )}
+
+      {entries.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #444", textAlign: "left" }}>
+              <th style={{ padding: "0.4rem 0.75rem" }}>Time</th>
+              <th style={{ padding: "0.4rem 0.75rem" }}>Client IP</th>
+              <th style={{ padding: "0.4rem 0.75rem" }}>Domain</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((e, i) => (
+              <tr
+                key={i}
+                style={{
+                  borderBottom: "1px solid #222",
+                  background: i % 2 === 0 ? "transparent" : "#0a0a0a",
+                }}
+              >
+                <td style={{ padding: "0.35rem 0.75rem", color: "#888", whiteSpace: "nowrap" }}>
+                  {new Date(e.timestamp).toLocaleTimeString()}
+                </td>
+                <td style={{ padding: "0.35rem 0.75rem", color: "#aaa" }}>{e.client_ip}</td>
+                <td style={{ padding: "0.35rem 0.75rem" }}>{e.domain}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
