@@ -17,15 +17,8 @@
       Server offline — retrying&hellip;
     </div>
 
-    <section id="requests-section">
-      <h2>Child Requests</h2>
-      <div id="requests-list">
-        <p class="empty-state">Loading&hellip;</p>
-      </div>
-    </section>
-
     <section id="url-log-section">
-      <h2>URL Activity</h2>
+      <h2>Browsing Activity</h2>
       <div id="url-log-list">
         <p class="empty-state">Loading&hellip;</p>
       </div>
@@ -35,120 +28,48 @@
   <script>
     const SERVER_URL = {{ server_url | tojson }};
 
-    function verdict_class(verdict) {
-      if (verdict === "ALLOW")  return "badge allow";
-      if (verdict === "BLOCK")  return "badge block";
-      if (verdict === "PAUSED") return "badge paused";
-      return "badge";
-    }
-
     function fmt_time(ts) {
       if (!ts) return "—";
       try { return new Date(ts).toLocaleTimeString(); } catch { return ts; }
     }
 
-    async function loadRequests() {
-      const list   = document.getElementById("requests-list");
+    async function loadUrlLog() {
+      const list   = document.getElementById("url-log-list");
       const banner = document.getElementById("offline-banner");
       const dot    = document.getElementById("status-indicator");
 
-      try {
-        const res = await fetch(`${SERVER_URL}/requests`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-
-        banner.hidden = true;
-        dot.className = "status-dot online";
-
-        const requests = data.requests ?? data ?? [];
-
-        if (requests.length === 0) {
-          list.innerHTML = '<p class="empty-state">No requests yet.</p>';
-          return;
-        }
-
-        list.innerHTML = requests.map(r => `
-          <div class="request-card" data-id="${r.id}" data-verdict="${r.verdict}">
-            <div class="request-header">
-              <span class="${verdict_class(r.verdict)}">${r.verdict ?? "PENDING"}</span>
-              <span class="score">Score: ${r.decision_score ?? "—"}/100</span>
-              <span class="device">${r.device_id ?? "unknown device"}</span>
-              <span class="timestamp">${fmt_time(r.timestamp)}</span>
-            </div>
-            <div class="url"><a href="${r.url}" target="_blank" rel="noopener noreferrer">${r.url}</a></div>
-            ${r.reason_text ? `<div class="reason">${r.reason_text}</div>` : ""}
-            ${r.verdict === "PAUSED" ? `
-              <div class="actions">
-                <button class="btn approve" onclick="decide('${r.id}', 'approve', this)">Approve</button>
-                <button class="btn deny"    onclick="decide('${r.id}', 'deny',    this)">Deny</button>
-              </div>` : ""}
-          </div>
-        `).join("");
-      } catch (err) {
-        banner.hidden = false;
-        dot.className = "status-dot offline";
-        console.error("Failed to load requests:", err);
-      }
-    }
-
-    async function decide(id, action, btn) {
-      const card = document.querySelector(`.request-card[data-id="${id}"]`);
-      const buttons = card.querySelectorAll(".btn");
-      buttons.forEach(b => { b.disabled = true; });
-
-      try {
-        const res = await fetch(`${SERVER_URL}/decision/${id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action })
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const verdict = action === "approve" ? "ALLOW" : "BLOCK";
-        const badge = card.querySelector(".badge");
-        badge.textContent = verdict;
-        badge.className = verdict_class(verdict);
-        card.querySelector(".actions").remove();
-      } catch (err) {
-        buttons.forEach(b => { b.disabled = false; });
-        alert("Failed to submit decision — please try again.");
-        console.error(err);
-      }
-    }
-
-    async function loadUrlLog() {
-      const list = document.getElementById("url-log-list");
       try {
         const res = await fetch(`${SERVER_URL}/url-log?n=50`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const entries = data.entries ?? [];
 
+        banner.hidden = true;
+        dot.className = "status-dot online";
+
         if (entries.length === 0) {
-          list.innerHTML = '<p class="empty-state">No URL activity yet. Start the HTTP proxy and configure the child device.</p>';
+          list.innerHTML = '<p class="empty-state">No activity yet — install the Chrome extension on the child\'s browser.</p>';
           return;
         }
 
         list.innerHTML = entries.map(e => `
           <div class="request-card">
             <div class="request-header">
-              <span class="badge">${e.method ?? "GET"}</span>
-              <span class="device">${e.client_ip ?? "unknown"}</span>
+              <span class="device">${e.domain ?? new URL(e.url).hostname}</span>
               <span class="timestamp">${fmt_time(e.timestamp)}</span>
             </div>
             <div class="url"><a href="${e.url}" target="_blank" rel="noopener noreferrer">${e.url}</a></div>
           </div>
         `).join("");
       } catch (err) {
-        list.innerHTML = '<p class="empty-state">Could not load URL log.</p>';
+        banner.hidden = false;
+        dot.className = "status-dot offline";
         console.error("Failed to load URL log:", err);
       }
     }
 
     // Initial load + poll every 5 seconds
-    loadRequests();
     loadUrlLog();
-    setInterval(loadRequests, 5000);
     setInterval(loadUrlLog, 5000);
   </script>
 </body>

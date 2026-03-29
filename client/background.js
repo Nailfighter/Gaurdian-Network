@@ -8,21 +8,25 @@ function getServerUrl() {
   });
 }
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  // Only fire when the page finishes loading and has a real URL
-  if (changeInfo.status !== "complete") return;
-  if (!tab.url) return;
-  if (tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return;
+async function sendUrl(url) {
+  if (!url) return;
+  if (url.startsWith("chrome://") || url.startsWith("chrome-extension://")) return;
+
+  let domain;
+  try {
+    domain = new URL(url).hostname;
+  } catch {
+    return;
+  }
 
   const serverUrl = await getServerUrl();
-  const domain = new URL(tab.url).hostname;
 
   try {
     await fetch(`${serverUrl}/url-log`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        url: tab.url,
+        url: url,
         domain: domain,
         method: "GET",
         timestamp: new Date().toISOString()
@@ -31,4 +35,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   } catch (err) {
     console.warn("[Guardian] Could not reach server:", err.message);
   }
+}
+
+// Normal page loads
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete" && tab.url) {
+    sendUrl(tab.url);
+  }
+});
+
+// SPA navigation (YouTube, Twitter, Gmail etc. — URL changes without full reload)
+chrome.webNavigation.onHistoryStateUpdated.addListener(details => {
+  sendUrl(details.url);
 });

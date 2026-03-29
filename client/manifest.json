@@ -3,7 +3,7 @@
   "name": "Guardian Network Monitor",
   "version": "1.0",
   "description": "Sends visited URLs to the Guardian parental control server.",
-  "permissions": ["tabs", "storage"],
+  "permissions": ["tabs", "storage", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
