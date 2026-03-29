@@ -3,7 +3,7 @@
   "name": "Guardian Network Monitor",
   "version": "1.0",
   "description": "Monitors and blocks websites for Guardian parental control.",
-  "permissions": ["tabs", "storage", "webNavigation", "declarativeNetRequest", "declarativeNetRequestFeedback"],
+  "permissions": ["tabs", "storage", "webNavigation", "alarms", "declarativeNetRequest", "declarativeNetRequestFeedback"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
