@@ -23,6 +23,13 @@
         <p class="empty-state">Loading&hellip;</p>
       </div>
     </section>
+
+    <section id="url-log-section">
+      <h2>URL Activity</h2>
+      <div id="url-log-list">
+        <p class="empty-state">Loading&hellip;</p>
+      </div>
+    </section>
   </main>
 
   <script>
@@ -109,9 +116,40 @@
       }
     }
 
+    async function loadUrlLog() {
+      const list = document.getElementById("url-log-list");
+      try {
+        const res = await fetch(`${SERVER_URL}/url-log?n=50`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const entries = data.entries ?? [];
+
+        if (entries.length === 0) {
+          list.innerHTML = '<p class="empty-state">No URL activity yet. Start the HTTP proxy and configure the child device.</p>';
+          return;
+        }
+
+        list.innerHTML = entries.map(e => `
+          <div class="request-card">
+            <div class="request-header">
+              <span class="badge">${e.method ?? "GET"}</span>
+              <span class="device">${e.client_ip ?? "unknown"}</span>
+              <span class="timestamp">${fmt_time(e.timestamp)}</span>
+            </div>
+            <div class="url"><a href="${e.url}" target="_blank" rel="noopener noreferrer">${e.url}</a></div>
+          </div>
+        `).join("");
+      } catch (err) {
+        list.innerHTML = '<p class="empty-state">Could not load URL log.</p>';
+        console.error("Failed to load URL log:", err);
+      }
+    }
+
     // Initial load + poll every 5 seconds
     loadRequests();
+    loadUrlLog();
     setInterval(loadRequests, 5000);
+    setInterval(loadUrlLog, 5000);
   </script>
 </body>
 </html>

@@ -4,9 +4,11 @@ import json
 import os
 import sys
 import threading
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 def _inject_sudo_user_site_packages() -> None:
     sudo_user = os.getenv("SUDO_USER")
@@ -20,23 +22,44 @@ def _inject_sudo_user_site_packages() -> None:
 
 
 try:
-    from fastapi import FastAPI, Query
+    from fastapi import FastAPI, Query, Request
     from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
 except ModuleNotFoundError:
     _inject_sudo_user_site_packages()
-    from fastapi import FastAPI, Query
+    from fastapi import FastAPI, Query, Request
     from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
 from guardian_dns import start_guardian
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DNS_LOG_FILE = BASE_DIR / "logs" / "dns_log.json"
+HTTP_LOG_FILE = BASE_DIR / "logs" / "http_log.json"
+HTTP_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+_http_log: deque = deque(maxlen=1000)
+_http_dirty = threading.Event()
+
+
+def _http_flush_loop() -> None:
+    while True:
+        _http_dirty.wait(timeout=1.0)
+        _http_dirty.clear()
+        snapshot = list(_http_log)
+        try:
+            HTTP_LOG_FILE.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+
+threading.Thread(target=_http_flush_loop, daemon=True).start()
 
 app = FastAPI(title="Guardian DNS Backend", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -51,6 +74,33 @@ def start_dns_service() -> None:
             print(f"[GuardianDNS] Failed to start DNS service: {exc}")
 
     threading.Thread(target=_run, daemon=True).start()
+
+    # Optionally start the HTTP proxy (set GUARDIAN_HTTP_PROXY_ENABLED=true to enable).
+    if os.getenv("GUARDIAN_HTTP_PROXY_ENABLED", "false").lower() == "true":
+        import asyncio
+        import sys
+        sys.path.insert(0, str(BASE_DIR))
+
+        async def _run_proxy() -> None:
+            try:
+                from mitmproxy.options import Options
+                from mitmproxy.tools.dump import DumpMaster
+                from guardian_http import GuardianHTTPAddon
+            except ImportError:
+                print("[GuardianHTTP] mitmproxy not installed — HTTP proxy disabled")
+                return
+
+            listen_port = int(os.getenv("GUARDIAN_HTTP_LISTEN_PORT", "8080"))
+            opts = Options(listen_host="0.0.0.0", listen_port=listen_port)
+            master = DumpMaster(opts, with_termlog=False, with_dumper=False)
+            master.addons.add(GuardianHTTPAddon())
+            print(f"[GuardianHTTP] Proxy listening on 0.0.0.0:{listen_port}")
+            await master.run()
+
+        def _proxy_thread() -> None:
+            asyncio.run(_run_proxy())
+
+        threading.Thread(target=_proxy_thread, daemon=True).start()
 
 
 def _read_dns_log() -> list[dict[str, Any]]:
@@ -77,6 +127,35 @@ def test_endpoint() -> Dict[str, str]:
 @app.get("/dns-log")
 def get_dns_log(n: int = Query(default=100, ge=1, le=1000)) -> Dict[str, Any]:
     entries = _read_dns_log()
+    sliced = entries[-n:]
+    sliced.reverse()
+    return {"count": len(sliced), "entries": sliced}
+
+
+class UrlEntry(BaseModel):
+    url: str
+    domain: Optional[str] = None
+    method: Optional[str] = "GET"
+    timestamp: Optional[str] = None
+
+
+@app.post("/url-log")
+def post_url_log(entry: UrlEntry, request: Request) -> Dict[str, str]:
+    domain = entry.domain or urlparse(entry.url).hostname or ""
+    _http_log.append({
+        "url": entry.url,
+        "domain": domain,
+        "method": entry.method or "GET",
+        "client_ip": request.client.host if request.client else "unknown",
+        "timestamp": entry.timestamp or datetime.now(timezone.utc).isoformat(),
+    })
+    _http_dirty.set()
+    return {"status": "ok"}
+
+
+@app.get("/url-log")
+def get_url_log(n: int = Query(default=100, ge=1, le=1000)) -> Dict[str, Any]:
+    entries = list(_http_log)
     sliced = entries[-n:]
     sliced.reverse()
     return {"count": len(sliced), "entries": sliced}

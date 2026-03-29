@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: sans-serif; width: 280px; padding: 16px; }
+    h2 { margin: 0 0 12px; font-size: 15px; }
+    label { font-size: 12px; color: #555; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; margin: 4px 0 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    button { width: 100%; padding: 7px; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    button:hover { background: #1d4ed8; }
+    #status { margin-top: 8px; font-size: 12px; color: #16a34a; text-align: center; }
+  </style>
+</head>
+<body>
+  <h2>Guardian Monitor</h2>
+  <label for="serverUrl">Server URL</label>
+  <input type="text" id="serverUrl" placeholder="http://192.168.1.x:8001" />
+  <button id="save">Save</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
