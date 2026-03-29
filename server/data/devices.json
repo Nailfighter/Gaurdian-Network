@@ -1,0 +1,10 @@
+{
+  "devices": [
+    {
+      "device_id": "demo-device-1",
+      "name": "Kid Tablet",
+      "user_age": 12,
+      "trust_score": 50
+    }
+  ]
+}
