@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Site Blocked — Guardian</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0f0f0f;
+      font-family: sans-serif;
+      color: #eee;
+    }
+    .card {
+      text-align: center;
+      padding: 3rem 2.5rem;
+      max-width: 420px;
+    }
+    .icon { font-size: 4rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.5rem; color: #f87171; }
+    p { color: #888; font-size: 0.95rem; line-height: 1.6; margin-top: 0.5rem; }
+    .domain {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.4rem 1rem;
+      background: #1f1f1f;
+      border: 1px solid #333;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.95rem;
+      color: #f87171;
+      word-break: break-all;
+    }
+    small { display: block; margin-top: 2rem; color: #444; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🛡️</div>
+    <h1>Site Blocked</h1>
+    <p>This website has been blocked by Guardian parental controls.</p>
+    <div class="domain" id="domain">—</div>
+    <small>Guardian Network Monitor</small>
+  </div>
+  <script>
+    const ref = document.referrer || "";
+    try {
+      const url = new URL(ref);
+      document.getElementById("domain").textContent = url.hostname;
+    } catch {
+      // referrer not available, leave as —
+    }
+  </script>
+</body>
+</html>
