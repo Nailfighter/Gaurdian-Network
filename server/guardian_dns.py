@@ -5,6 +5,7 @@ import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 import os
 import sys
 
@@ -45,6 +46,26 @@ _dirty = threading.Event()
 # Blocklist — set of domains to block (e.g. {"youtube.com", "tiktok.com"})
 _blocklist: set[str] = set()
 _blocklist_lock = threading.Lock()
+
+
+def _normalize_domain(value: str) -> str:
+    """Normalize user/supabase value to a plain lowercase hostname."""
+    candidate = (value or "").strip().lower()
+    if not candidate:
+        return ""
+
+    parsed = urlparse(candidate)
+    if parsed.scheme:
+        candidate = parsed.hostname or ""
+    else:
+        candidate = candidate.split("/")[0]
+        candidate = candidate.split(":", 1)[0]
+
+    candidate = candidate.rstrip(".")
+    if candidate.startswith("www."):
+        candidate = candidate[4:]
+
+    return candidate
 
 
 # ── Logging ──────────────────────────────────────────────────────────────────
@@ -91,7 +112,13 @@ def _load_blocklist() -> set[str]:
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
-            return {row["domain"] for row in data if "domain" in row}
+            return {
+                normalized
+                for row in data
+                if "domain" in row
+                for normalized in [_normalize_domain(str(row["domain"]))]
+                if normalized
+            }
     except Exception as exc:
         print(f"[BlocklistSync] Failed to fetch blocklist: {exc}")
         return set()
@@ -110,8 +137,12 @@ def _blocklist_refresh_loop():
 
 def _is_blocked(domain: str) -> bool:
     """Return True if domain or any parent suffix is in the blocklist."""
+    normalized_domain = _normalize_domain(domain)
+    if not normalized_domain:
+        return False
+
     with _blocklist_lock:
-        parts = domain.split(".")
+        parts = normalized_domain.split(".")
         for i in range(len(parts) - 1):
             if ".".join(parts[i:]) in _blocklist:
                 return True

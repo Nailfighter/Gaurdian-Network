@@ -204,6 +204,25 @@ class BlocklistEntry(BaseModel):
     domain: str
 
 
+def _normalize_domain(value: str) -> str:
+    candidate = (value or "").strip().lower()
+    if not candidate:
+        return ""
+
+    parsed = urlparse(candidate)
+    if parsed.scheme:
+        candidate = parsed.hostname or ""
+    else:
+        candidate = candidate.split("/")[0]
+        candidate = candidate.split(":", 1)[0]
+
+    candidate = candidate.rstrip(".")
+    if candidate.startswith("www."):
+        candidate = candidate[4:]
+
+    return candidate
+
+
 @app.get("/blocklist")
 def get_blocklist() -> Dict[str, Any]:
     try:
@@ -215,7 +234,10 @@ def get_blocklist() -> Dict[str, Any]:
 
 @app.post("/blocklist")
 def add_to_blocklist(entry: BlocklistEntry) -> Dict[str, Any]:
-    domain = entry.domain.strip().lower().lstrip("www.")
+    domain = _normalize_domain(entry.domain)
+    if not domain:
+        return {"error": "Invalid domain"}
+
     body = json.dumps({"domain": domain, "active": True}).encode()
     try:
         rows = _supa_request("POST", "blocklist", body=body)
@@ -226,9 +248,13 @@ def add_to_blocklist(entry: BlocklistEntry) -> Dict[str, Any]:
 
 @app.delete("/blocklist/{domain}")
 def remove_from_blocklist(domain: str) -> Dict[str, str]:
+    normalized = _normalize_domain(domain)
+    if not normalized:
+        return {"error": "Invalid domain"}
+
     body = json.dumps({"active": False}).encode()
     try:
-        _supa_request("PATCH", f"blocklist?domain=eq.{domain}", body=body)
+        _supa_request("PATCH", f"blocklist?domain=eq.{normalized}", body=body)
         return {"status": "ok"}
     except Exception as exc:
         return {"error": str(exc)}
