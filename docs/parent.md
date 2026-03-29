@@ -28,7 +28,7 @@ parent/
 ## Phase 1 Tasks
 
 ### 1.4 Parent Dashboard
-- [x] `parent/templates/dashboard.html` — main page polling `GET {SERVER_URL}/requests`
+  - [x] `parent/templates/dashboard.html` — main page polling `GET {SERVER_URL}/requests`
   - List of recent child requests (URL, device name, timestamp)
   - For each request: decision badge (ALLOW / BLOCK / PAUSED), score (0-100), reason text
   - For PAUSED requests: **Approve** and **Deny** buttons
