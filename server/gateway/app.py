@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
+def _inject_sudo_user_site_packages() -> None:
+    sudo_user = os.getenv("SUDO_USER")
+    if not sudo_user:
+        return
+
+    pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
+    candidate = f"/home/{sudo_user}/.local/lib/python{pyver}/site-packages"
+    if os.path.isdir(candidate) and candidate not in sys.path:
+        sys.path.append(candidate)
+
+
+try:
+    from fastapi import FastAPI, Query
+    from fastapi.middleware.cors import CORSMiddleware
+except ModuleNotFoundError:
+    _inject_sudo_user_site_packages()
+    from fastapi import FastAPI, Query
+    from fastapi.middleware.cors import CORSMiddleware
+from guardian_dns import start_guardian
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DNS_LOG_FILE = BASE_DIR / "logs" / "dns_log.json"
@@ -19,6 +39,18 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def start_dns_service() -> None:
+    # Run DNS proxy/logger in the background when the API starts.
+    def _run() -> None:
+        try:
+            start_guardian()
+        except Exception as exc:
+            print(f"[GuardianDNS] Failed to start DNS service: {exc}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _read_dns_log() -> list[dict[str, Any]]:

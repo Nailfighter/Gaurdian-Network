@@ -4,13 +4,30 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+import os
+import sys
 
-from dnslib import DNSRecord
+def _inject_sudo_user_site_packages() -> None:
+    sudo_user = os.getenv("SUDO_USER")
+    if not sudo_user:
+        return
 
-LISTEN_IP = "0.0.0.0"
-LISTEN_PORT = 53
-UPSTREAM_DNS = "1.1.1.1"
-MONITORED_CLIENT_IP = "100.73.141.11"
+    pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
+    candidate = f"/home/{sudo_user}/.local/lib/python{pyver}/site-packages"
+    if os.path.isdir(candidate) and candidate not in sys.path:
+        sys.path.append(candidate)
+
+
+try:
+    from dnslib import DNSRecord
+except ModuleNotFoundError:
+    _inject_sudo_user_site_packages()
+    from dnslib import DNSRecord
+
+LISTEN_IP = os.getenv("GUARDIAN_DNS_LISTEN_IP", "0.0.0.0")
+LISTEN_PORT = int(os.getenv("GUARDIAN_DNS_LISTEN_PORT", "53"))
+UPSTREAM_DNS = os.getenv("GUARDIAN_DNS_UPSTREAM", "1.1.1.1")
+MONITORED_CLIENT_IP = os.getenv("GUARDIAN_DNS_MONITORED_CLIENT_IP", "100.73.141.11")
 MAX_LOG_ENTRIES = 1000
 FLUSH_INTERVAL = 1.0  # seconds between file writes
 
@@ -51,7 +68,7 @@ def _forward(data: bytes, upstream_sock: socket.socket) -> bytes | None:
         return None
 
 
-def start_guardian():
+def start_guardian() -> None:
     threading.Thread(target=_flush_loop, daemon=True).start()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -59,7 +76,7 @@ def start_guardian():
     upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     upstream_sock.settimeout(1.5)
 
-    print(f"[DNS Logger] Listening on {LISTEN_IP}:{LISTEN_PORT} — monitoring {MONITORED_CLIENT_IP}")
+    print(f"[DNS Logger] Listening on {LISTEN_IP}:{LISTEN_PORT} - monitoring {MONITORED_CLIENT_IP}")
 
     while True:
         data, addr = sock.recvfrom(512)
