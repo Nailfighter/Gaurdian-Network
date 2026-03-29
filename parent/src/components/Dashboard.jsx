@@ -58,6 +58,8 @@ export default function Dashboard() {
           <thead>
             <tr style={{ borderBottom: "1px solid #444", textAlign: "left" }}>
               <th style={{ padding: "0.4rem 0.75rem" }}>Time</th>
+              <th style={{ padding: "0.4rem 0.75rem" }}>Device</th>
+              <th style={{ padding: "0.4rem 0.75rem" }}>Device ID</th>
               <th style={{ padding: "0.4rem 0.75rem" }}>Client IP</th>
               <th style={{ padding: "0.4rem 0.75rem" }}>Domain</th>
             </tr>
@@ -73,6 +75,12 @@ export default function Dashboard() {
               >
                 <td style={{ padding: "0.35rem 0.75rem", color: "#888", whiteSpace: "nowrap" }}>
                   {new Date(e.timestamp).toLocaleTimeString()}
+                </td>
+                <td style={{ padding: "0.35rem 0.75rem", color: "#e2e8f0" }}>
+                  {e.device_name || "Unknown Device"}
+                </td>
+                <td style={{ padding: "0.35rem 0.75rem", color: "#94a3b8", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}>
+                  {e.device_id || "unknown-device"}
                 </td>
                 <td style={{ padding: "0.35rem 0.75rem", color: "#aaa" }}>{e.client_ip}</td>
                 <td style={{ padding: "0.35rem 0.75rem" }}>{e.domain}</td>
