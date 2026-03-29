@@ -23,7 +23,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadLog();
-    const interval = setInterval(loadLog, 3000);
+    const interval = setInterval(loadLog, 10000);
     return () => clearInterval(interval);
   }, [loadLog]);
 
