@@ -1,6 +1,7 @@
 import json
 import socket
 import threading
+import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,10 +20,10 @@ def _inject_sudo_user_site_packages() -> None:
 
 
 try:
-    from dnslib import DNSRecord
+    from dnslib import DNSRecord, RCODE
 except ModuleNotFoundError:
     _inject_sudo_user_site_packages()
-    from dnslib import DNSRecord
+    from dnslib import DNSRecord, RCODE
 
 LISTEN_IP = os.getenv("GUARDIAN_DNS_LISTEN_IP", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("GUARDIAN_DNS_LISTEN_PORT", "53"))
@@ -31,12 +32,22 @@ MONITORED_CLIENT_IP = os.getenv("GUARDIAN_DNS_MONITORED_CLIENT_IP", "100.73.141.
 MAX_LOG_ENTRIES = 1000
 FLUSH_INTERVAL = 1.0  # seconds between file writes
 
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+BLOCKLIST_REFRESH_INTERVAL = 30  # seconds
+
 LOG_FILE = Path(__file__).resolve().parent / "logs" / "dns_log.json"
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 _log: deque = deque(maxlen=MAX_LOG_ENTRIES)
 _dirty = threading.Event()
 
+# Blocklist — set of domains to block (e.g. {"youtube.com", "tiktok.com"})
+_blocklist: set[str] = set()
+_blocklist_lock = threading.Lock()
+
+
+# ── Logging ──────────────────────────────────────────────────────────────────
 
 def _flush_loop():
     """Background thread: writes log to disk whenever new entries arrive."""
@@ -50,14 +61,64 @@ def _flush_loop():
             pass
 
 
-def _append_entry(domain: str, client_ip: str) -> None:
-    _log.append({
+def _append_entry(domain: str, client_ip: str, blocked: bool = False) -> None:
+    entry = {
         "domain": domain,
         "client_ip": client_ip,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if blocked:
+        entry["blocked"] = True
+    _log.append(entry)
     _dirty.set()
 
+
+# ── Blocklist ─────────────────────────────────────────────────────────────────
+
+def _load_blocklist() -> set[str]:
+    """Fetch active blocklist from Supabase REST API."""
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        return set()
+
+    url = f"{SUPABASE_URL}/rest/v1/blocklist?active=eq.true&select=domain"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            return {row["domain"] for row in data if "domain" in row}
+    except Exception as exc:
+        print(f"[BlocklistSync] Failed to fetch blocklist: {exc}")
+        return set()
+
+
+def _blocklist_refresh_loop():
+    """Background thread: refreshes blocklist from Supabase every 30 seconds."""
+    global _blocklist
+    while True:
+        domains = _load_blocklist()
+        with _blocklist_lock:
+            _blocklist = domains
+        print(f"[BlocklistSync] Loaded {len(domains)} blocked domain(s)")
+        threading.Event().wait(timeout=BLOCKLIST_REFRESH_INTERVAL)
+
+
+def _is_blocked(domain: str) -> bool:
+    """Return True if domain or any parent suffix is in the blocklist."""
+    with _blocklist_lock:
+        parts = domain.split(".")
+        for i in range(len(parts) - 1):
+            if ".".join(parts[i:]) in _blocklist:
+                return True
+        return False
+
+
+# ── DNS proxy ─────────────────────────────────────────────────────────────────
 
 def _forward(data: bytes, upstream_sock: socket.socket) -> bytes | None:
     try:
@@ -68,8 +129,15 @@ def _forward(data: bytes, upstream_sock: socket.socket) -> bytes | None:
         return None
 
 
+def _nxdomain(data: bytes) -> bytes:
+    reply = DNSRecord.parse(data).reply()
+    reply.header.rcode = RCODE.NXDOMAIN
+    return reply.pack()
+
+
 def start_guardian() -> None:
     threading.Thread(target=_flush_loop, daemon=True).start()
+    threading.Thread(target=_blocklist_refresh_loop, daemon=True).start()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((LISTEN_IP, LISTEN_PORT))
@@ -89,14 +157,17 @@ def start_guardian() -> None:
             domain = "<parse error>"
 
         if client_ip == MONITORED_CLIENT_IP:
+            if _is_blocked(domain):
+                _append_entry(domain, client_ip, blocked=True)
+                sock.sendto(_nxdomain(data), addr)
+                continue
             _append_entry(domain, client_ip)
 
         upstream_response = _forward(data, upstream_sock)
         if upstream_response:
             sock.sendto(upstream_response, addr)
         else:
-            reply = DNSRecord.parse(data).reply()
-            sock.sendto(reply.pack(), addr)
+            sock.sendto(_nxdomain(data), addr)
 
 
 if __name__ == "__main__":

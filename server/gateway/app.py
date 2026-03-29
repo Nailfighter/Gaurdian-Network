@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import threading
+import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,9 +60,32 @@ app = FastAPI(title="Guardian DNS Backend", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+
+
+def _supa_headers() -> dict:
+    return {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+
+def _supa_request(method: str, path: str, body: bytes | None = None) -> Any:
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/{path}",
+        data=body,
+        headers=_supa_headers(),
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode())
 
 
 @app.on_event("startup")
@@ -159,6 +183,40 @@ def get_url_log(n: int = Query(default=100, ge=1, le=1000)) -> Dict[str, Any]:
     sliced = entries[-n:]
     sliced.reverse()
     return {"count": len(sliced), "entries": sliced}
+
+
+class BlocklistEntry(BaseModel):
+    domain: str
+
+
+@app.get("/blocklist")
+def get_blocklist() -> Dict[str, Any]:
+    try:
+        rows = _supa_request("GET", "blocklist?select=id,domain,active,created_at&order=created_at.desc")
+        return {"count": len(rows), "entries": rows}
+    except Exception as exc:
+        return {"error": str(exc), "entries": []}
+
+
+@app.post("/blocklist")
+def add_to_blocklist(entry: BlocklistEntry) -> Dict[str, Any]:
+    domain = entry.domain.strip().lower().lstrip("www.")
+    body = json.dumps({"domain": domain, "active": True}).encode()
+    try:
+        rows = _supa_request("POST", "blocklist", body=body)
+        return {"status": "ok", "entry": rows[0] if rows else {}}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.delete("/blocklist/{domain}")
+def remove_from_blocklist(domain: str) -> Dict[str, str]:
+    body = json.dumps({"active": False}).encode()
+    try:
+        _supa_request("PATCH", f"blocklist?domain=eq.{domain}", body=body)
+        return {"status": "ok"}
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 if __name__ == "__main__":
