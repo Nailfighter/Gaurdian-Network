@@ -1,22 +1,48 @@
 import socket
-from dnslib import DNSRecord, QTYPE, RR, A
+from dnslib import DNSRecord
 
 # CONFIG
 LISTEN_IP = "0.0.0.0"
 LISTEN_PORT = 53
 UPSTREAM_DNS = "1.1.1.1"
-BLOCKED_CLIENT_IP = "100.81.172.29"
-BLOCKED_SITES = ["reddit.com", "psu.edu", "facebook.com"]
 
-def get_real_ip(domain):
-    """Directly queries upstream to avoid Tailscale loops."""
+# In a real hack, this would be your SQLite DB or an AI API call
+BLOCK_LIST = [
+    "reddit.com",
+    "redd.it",
+    "redditmedia.com",
+    "redditstatic.com",
+    "youtube.com",
+    "facebook.com",
+    "psu.edu",
+]
+BLOCK_KEYWORDS = ["reddit", "youtube"]
+CLIENT_IP = "100.73.141.11"
+
+
+def is_blocked_domain(domain):
+    """Block exact/suffix domains and keyword matches."""
+    normalized = domain.lower().rstrip(".")
+
+    for keyword in BLOCK_KEYWORDS:
+        if keyword.lower() in normalized:
+            return True
+
+    for blocked in BLOCK_LIST:
+        blocked = blocked.lower().rstrip(".")
+        if normalized == blocked or normalized.endswith("." + blocked):
+            return True
+    return False
+
+def query_upstream_raw(data):
+    """For allowed domains, return the full upstream DNS response."""
     try:
-        q = DNSRecord.question(domain)
-        packet = q.send(UPSTREAM_DNS, 53, timeout=1.5)
-        answer = DNSRecord.parse(packet)
-        for rr in answer.rr:
-            if rr.rtype == QTYPE.A:
-                return str(rr.rdata)
+        upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        upstream_sock.settimeout(1.5)
+        upstream_sock.sendto(data, (UPSTREAM_DNS, 53))
+        response, _ = upstream_sock.recvfrom(4096)
+        upstream_sock.close()
+        return response
     except:
         return None
 
@@ -30,21 +56,37 @@ def start_guardian():
         request = DNSRecord.parse(data)
         domain = str(request.q.qname).strip(".")
 
-        # Apply domain blocklist only to the configured client IP.
-        site_blocked = any(site in domain for site in BLOCKED_SITES)
-        is_blocked = (addr[0] == BLOCKED_CLIENT_IP) and site_blocked
+        # 1. THE AGENTIC CHECK
+        is_blocked = False
+        reason = "Allowed"
 
-        reply = request.reply()
-        if is_blocked:
-            print(f"[BLOCK] {addr[0]} -> {domain}")
-            reply.add_answer(RR(domain, QTYPE.A, rdata=A("0.0.0.0")))
-        else:
-            print(f"[ALLOW] {addr[0]} -> {domain}")
-            ip = get_real_ip(domain)
-            if ip:
-                reply.add_answer(RR(domain, QTYPE.A, rdata=A(ip)))
+        if addr[0] == CLIENT_IP and is_blocked_domain(domain):
+            is_blocked = True
+            reason = "Static Blocklist"
         
-        sock.sendto(reply.pack(), addr)
+        # TODO: Add your K2 Think / Claude API call here
+        # if ai_check(domain) == "UNSAFE": is_blocked = True
+
+        if is_blocked:
+            reply = request.reply()
+            if addr[0] == CLIENT_IP:
+                print(f"[BLOCK] {addr[0]} tried to visit {domain} -> Filtered ({reason})")
+
+            # Force block for all DNS record types.
+            reply.header.rcode = 3  # NXDOMAIN
+
+            sock.sendto(reply.pack(), addr)
+        else:
+            if addr[0] == CLIENT_IP:
+                print(f"[ALLOW] {addr[0]} is visiting {domain}")
+
+            upstream_response = query_upstream_raw(data)
+            if upstream_response:
+                sock.sendto(upstream_response, addr)
+            else:
+                # Fallback to an empty reply instead of crashing on timeout.
+                reply = request.reply()
+                sock.sendto(reply.pack(), addr)
 
 if __name__ == "__main__":
     start_guardian()
